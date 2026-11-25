@@ -1,0 +1,72 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_ZIP: Wavely.zip
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Licenze Android SDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" || true
+
+      - name: Estrai lo zip
+        run: |
+          ZIP=$(find . -maxdepth 3 -name "$APP_ZIP" -not -path "./progetto/*" | head -n 1)
+          echo "Zip trovato: $ZIP"
+          if [ -z "$ZIP" ]; then
+            echo "Zip $APP_ZIP non trovato. File nel repository:"
+            ls -R | head -n 50
+            exit 1
+          fi
+          rm -rf progetto && mkdir progetto
+          unzip -o "$ZIP" -d progetto
+          SETTINGS=$(find progetto -name settings.gradle.kts | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            echo "settings.gradle.kts non trovato nello zip"
+            ls -R progetto | head -n 50
+            exit 1
+          fi
+          echo "DIR=$(dirname "$SETTINGS")" >> $GITHUB_ENV
+
+      - name: Compila
+        run: |
+          cd "$DIR"
+          gradle assembleDebug --no-daemon
+
+      - name: Rinomina l'APK
+        run: |
+          NAME="${APP_ZIP%.zip}"
+          cp "$DIR/app/build/outputs/apk/debug/app-debug.apk" "$GITHUB_WORKSPACE/$NAME.apk"
+          echo "APK=$GITHUB_WORKSPACE/$NAME.apk" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ env.APK }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          files: ${{ env.APK }}
